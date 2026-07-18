@@ -1,0 +1,7 @@
+/dist/
+*.exe
+*.zip
+*.tmp
+Data/
+.vscode/
+.idea/
