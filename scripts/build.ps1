@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [string]$Version = '0.3.0',
+    [string]$Version = '0.3.1',
     [string]$GitHubOwner = 'FionaAleksic',
     [string]$GitHubRepository = 'Aschente-Launcher',
     [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\dist')

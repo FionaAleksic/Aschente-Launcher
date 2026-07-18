@@ -87,6 +87,7 @@ function Invoke-UiPump {
     catch { }
 }
 
+
 function Get-LatestRelease {
     if (-not (Test-RepositoryConfiguration)) {
         throw 'Die fest eingebaute GitHub-Quelle FionaAleksic/Aschente-Launcher ist ungültig.'
@@ -97,7 +98,27 @@ function Get-LatestRelease {
         Accept = 'application/vnd.github+json'
         'User-Agent' = "Aschente-Installer/$($env:ASCHENTE_INSTALLER_VERSION)"
     }
-    return Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+
+    try {
+        return Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+    }
+    catch {
+        $statusCode = $null
+        try { $statusCode = [int]$_.Exception.Response.StatusCode } catch { }
+
+        if ($statusCode -eq 404) {
+            throw @"
+Auf GitHub wurde noch kein veröffentlichtes Release gefunden.
+
+Bitte veröffentliche zuerst eine Version im Repository:
+https://github.com/$($script:Owner)/$($script:Repository)/releases
+
+Erst danach kann der Installer automatisch die neueste Version herunterladen.
+"@
+        }
+
+        throw "Das neueste GitHub-Release konnte nicht abgefragt werden.`n`n$($_.Exception.Message)"
+    }
 }
 
 function Stop-RunningLauncher {
@@ -214,7 +235,7 @@ function Install-LatestRelease {
             }
         }
         if ([string]::IsNullOrWhiteSpace($expectedHash)) {
-            throw 'Für das Release wurde keine SHA-256-Prüfsumme gefunden. Die Installation wurde aus Sicherheitsgründen abgebrochen.'
+            throw 'Für das Release wurde keine SHA-256-Prüfsumme gefunden (SHA256SUMS.txt fehlt oder ist unvollständig). Die Installation wurde aus Sicherheitsgründen abgebrochen.'
         }
         $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
         if ($actualHash -ine $expectedHash) {
@@ -361,23 +382,37 @@ if ($installedInfo -and -not [string]::IsNullOrWhiteSpace($installedInfo.Install
         Title="Aschente Launcher – Installation"
         Width="760" Height="640" MinWidth="720" MinHeight="600"
         WindowStartupLocation="CenterScreen" ResizeMode="CanMinimize"
-        Background="#11141B" Foreground="#F5F7FA">
+        Background="#0E1218" Foreground="#F4F7FB">
     <Window.Resources>
+        <SolidColorBrush x:Key="PanelBrush" Color="#171D26"/>
+        <SolidColorBrush x:Key="PanelBrushAlt" Color="#121821"/>
+        <SolidColorBrush x:Key="BorderBrushPanel" Color="#2A3340"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#2563EB"/>
         <Style TargetType="Button">
-            <Setter Property="Background" Value="#303746"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Background" Value="#1C2430"/>
+            <Setter Property="Foreground" Value="#F4F7FB"/>
+            <Setter Property="BorderBrush" Value="#334155"/>
+            <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="17,9"/>
             <Setter Property="MinHeight" Value="38"/>
             <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style x:Key="AccentButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
         </Style>
         <Style TargetType="TextBox">
             <Setter Property="Height" Value="36"/>
             <Setter Property="Padding" Value="10,6"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Background" Value="#0D131A"/>
+            <Setter Property="Foreground" Value="#F4F7FB"/>
+            <Setter Property="BorderBrush" Value="#364152"/>
+            <Setter Property="BorderThickness" Value="1"/>
         </Style>
         <Style TargetType="CheckBox">
-            <Setter Property="Foreground" Value="#EDF0F5"/>
+            <Setter Property="Foreground" Value="#E7ECF3"/>
             <Setter Property="Margin" Value="0,7"/>
         </Style>
     </Window.Resources>
@@ -393,20 +428,20 @@ if ($installedInfo -and -not [string]::IsNullOrWhiteSpace($installedInfo.Install
 
         <Grid Grid.Row="0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="92"/>
+                <ColumnDefinition Width="88"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <Border Width="76" Height="76" CornerRadius="15" Background="#1D2230" VerticalAlignment="Center">
+            <Border Width="72" Height="72" CornerRadius="8" Background="#111722" BorderBrush="#2A3340" BorderThickness="1" VerticalAlignment="Center">
                 <Image x:Name="BrandImage" Stretch="Uniform" Margin="5"/>
             </Border>
             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="16,0,0,0">
-                <TextBlock Text="Aschente Launcher" FontSize="30" FontWeight="SemiBold"/>
+                <TextBlock Text="Aschente Launcher" FontSize="29" FontWeight="SemiBold"/>
                 <TextBlock Text="Lokale Spielebibliothek installieren oder aktualisieren"
-                           Margin="0,5,0,0" FontSize="15" Foreground="#AEB6C5"/>
+                           Margin="0,5,0,0" FontSize="15" Foreground="#A8B3C2"/>
             </StackPanel>
         </Grid>
 
-        <Border Grid.Row="2" Background="#1C212B" CornerRadius="12" Padding="22">
+        <Border Grid.Row="2" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrushPanel}" BorderThickness="1" CornerRadius="6" Padding="22">
             <Grid>
                 <Grid x:Name="OptionsPage">
                     <Grid.RowDefinitions>
@@ -419,7 +454,7 @@ if ($installedInfo -and -not [string]::IsNullOrWhiteSpace($installedInfo.Install
                     </Grid.RowDefinitions>
 
                     <TextBlock Text="Installationsoptionen" FontSize="22" FontWeight="SemiBold"/>
-                    <TextBlock Grid.Row="1" Margin="0,7,0,0" Foreground="#AEB6C5" TextWrapping="Wrap"
+                    <TextBlock Grid.Row="1" Margin="0,7,0,0" Foreground="#A8B3C2" TextWrapping="Wrap"
                                Text="Der Installer lädt automatisch das neueste Release von FionaAleksic/Aschente-Launcher. Eine GitHub-Eingabe ist nicht erforderlich."/>
 
                     <StackPanel Grid.Row="3">
@@ -432,14 +467,14 @@ if ($installedInfo -and -not [string]::IsNullOrWhiteSpace($installedInfo.Install
                             <TextBox x:Name="InstallPathBox"/>
                             <Button x:Name="BrowseButton" Grid.Column="1" Content="Durchsuchen…" Margin="10,0,0,0"/>
                         </Grid>
-                        <TextBlock Text="Standard: C:\Program Files\Aschente" Margin="0,7,0,0" Foreground="#8F98A8" FontSize="12"/>
+                        <TextBlock Text="Standard: C:\Program Files\Aschente" Margin="0,7,0,0" Foreground="#7F8B9A" FontSize="12"/>
                     </StackPanel>
 
                     <StackPanel Grid.Row="5">
                         <CheckBox x:Name="StartMenuCheck" Content="Startmenü-Verknüpfung für alle Benutzer erstellen" IsChecked="True"/>
                         <CheckBox x:Name="DesktopCheck" Content="Desktop-Verknüpfung für alle Benutzer erstellen"/>
-                        <Border Margin="0,18,0,0" Background="#151922" CornerRadius="8" Padding="14">
-                            <TextBlock Foreground="#B9C0CC" TextWrapping="Wrap"
+                        <Border Margin="0,18,0,0" Background="{StaticResource PanelBrushAlt}" BorderBrush="#273241" BorderThickness="1" CornerRadius="5" Padding="14">
+                            <TextBlock Foreground="#B9C3D0" TextWrapping="Wrap"
                                        Text="Bei einem Update bleiben Konfiguration, Bibliothekseinträge und Protokolle im Data-Ordner erhalten."/>
                         </Border>
                     </StackPanel>
@@ -456,14 +491,14 @@ if ($installedInfo -and -not [string]::IsNullOrWhiteSpace($installedInfo.Install
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <TextBlock Text="Installation bestätigen" FontSize="22" FontWeight="SemiBold"/>
-                    <TextBlock Grid.Row="1" Margin="0,7,0,0" Foreground="#AEB6C5" TextWrapping="Wrap"
+                    <TextBlock Grid.Row="1" Margin="0,7,0,0" Foreground="#A8B3C2" TextWrapping="Wrap"
                                Text="Prüfe die Einstellungen. Mit „Installieren“ wird das neueste GitHub-Release heruntergeladen und eingerichtet."/>
-                    <Border Grid.Row="3" Background="#151922" CornerRadius="8" Padding="16">
+                    <Border Grid.Row="3" Background="{StaticResource PanelBrushAlt}" BorderBrush="#273241" BorderThickness="1" CornerRadius="5" Padding="16">
                         <TextBlock x:Name="SummaryText" TextWrapping="Wrap" FontSize="14" LineHeight="24"/>
                     </Border>
                     <StackPanel Grid.Row="5">
-                        <ProgressBar x:Name="ProgressBar" Height="10" Minimum="0" Maximum="100" Value="0"/>
-                        <TextBlock x:Name="StatusText" Margin="0,11,0,0" Foreground="#C8CFDA" Text="Bereit zur Installation." TextWrapping="Wrap"/>
+                        <ProgressBar x:Name="ProgressBar" Height="8" Minimum="0" Maximum="100" Value="0" Background="#0C1117" Foreground="#2563EB"/>
+                        <TextBlock x:Name="StatusText" Margin="0,11,0,0" Foreground="#CBD5E1" Text="Bereit zur Installation." TextWrapping="Wrap"/>
                     </StackPanel>
                 </Grid>
             </Grid>
@@ -477,7 +512,7 @@ if ($installedInfo -and -not [string]::IsNullOrWhiteSpace($installedInfo.Install
             <Button x:Name="BackButton" Content="Zurück" MinWidth="110" Visibility="Hidden" HorizontalAlignment="Left"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal">
                 <Button x:Name="CancelButton" Content="Abbrechen" MinWidth="110"/>
-                <Button x:Name="NextButton" Content="Weiter" MinWidth="150" Margin="12,0,0,0" Background="#6557E8" FontWeight="SemiBold"/>
+                <Button x:Name="NextButton" Content="Weiter" MinWidth="150" Margin="12,0,0,0" Style="{StaticResource AccentButton}"/>
             </StackPanel>
         </Grid>
     </Grid>

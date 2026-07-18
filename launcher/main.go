@@ -21,7 +21,7 @@ var launcherScript []byte
 //go:embed Aschente_Icon.png
 var brandImage []byte
 
-var version = "0.3.0-dev"
+var version = "0.3.1-dev"
 
 func main() {
 	exePath, err := os.Executable()

@@ -52,7 +52,7 @@ Den Inhalt der Update-ZIP direkt in den vorhandenen Repository-Ordner entpacken 
 .\scripts\Publish-NewVersion.ps1 -Version 0.3.0
 ```
 
-Das Skript committed die Änderungen, pusht den aktuellen Branch, erzeugt den Tag `v0.3.0` und pusht ihn. Der Tag startet automatisch `.github/workflows/release.yml`.
+Das Skript committed die Änderungen, pusht den aktuellen Branch, erzeugt den Tag `v0.3.1` und pusht ihn. Der Tag startet automatisch `.github/workflows/release.yml`.
 
 ## Automatisch erzeugte Release-Dateien
 
