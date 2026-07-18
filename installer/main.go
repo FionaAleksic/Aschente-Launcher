@@ -4,7 +4,6 @@ package main
 
 import (
 	_ "embed"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,14 +16,15 @@ import (
 //go:embed Installer.ps1
 var installerScript []byte
 
-var defaultOwner = ""
-var defaultRepo = ""
-var version = "0.2.0-dev"
+//go:embed Aschente_Icon.png
+var brandImage []byte
 
-type installerConfig struct {
-	GitHubOwner      string `json:"githubOwner"`
-	GitHubRepository string `json:"githubRepository"`
-}
+var version = "0.3.0-dev"
+
+const (
+	githubOwner      = "FionaAleksic"
+	githubRepository = "Aschente-Launcher"
+)
 
 func main() {
 	exePath, err := os.Executable()
@@ -40,17 +40,21 @@ func main() {
 		return
 	}
 
-	owner, repo := readRepositoryConfig(filepath.Dir(exePath))
 	tempDir, err := os.MkdirTemp("", "Aschente-Installer-")
 	if err != nil {
-		messageBox("Aschente Installer", "Temporärer Ordner konnte nicht erstellt werden.\n\n"+err.Error(), 0x10)
+		messageBox("Aschente Installer", "Der temporäre Ordner konnte nicht erstellt werden.\n\n"+err.Error(), 0x10)
 		return
 	}
 	defer os.RemoveAll(tempDir)
 
 	scriptPath := filepath.Join(tempDir, "Installer.ps1")
-	if err := os.WriteFile(scriptPath, installerScript, 0o600); err != nil {
-		messageBox("Aschente Installer", "Installationsskript konnte nicht vorbereitet werden.\n\n"+err.Error(), 0x10)
+	brandPath := filepath.Join(tempDir, "Aschente_Icon.png")
+	if err := writeUTF8BOM(scriptPath, installerScript, 0o600); err != nil {
+		messageBox("Aschente Installer", "Das Installationsskript konnte nicht vorbereitet werden.\n\n"+err.Error(), 0x10)
+		return
+	}
+	if err := os.WriteFile(brandPath, brandImage, 0o600); err != nil {
+		messageBox("Aschente Installer", "Das Programmlogo konnte nicht vorbereitet werden.\n\n"+err.Error(), 0x10)
 		return
 	}
 
@@ -59,10 +63,11 @@ func main() {
 
 	cmd := exec.Command("powershell.exe", args...)
 	cmd.Env = append(os.Environ(),
-		"ASCHENTE_GITHUB_OWNER="+owner,
-		"ASCHENTE_GITHUB_REPO="+repo,
+		"ASCHENTE_GITHUB_OWNER="+githubOwner,
+		"ASCHENTE_GITHUB_REPO="+githubRepository,
 		"ASCHENTE_INSTALLER_EXE="+exePath,
 		"ASCHENTE_INSTALLER_VERSION="+strings.TrimPrefix(version, "v"),
+		"ASCHENTE_BRAND_IMAGE="+brandPath,
 	)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if err := cmd.Run(); err != nil {
@@ -70,22 +75,15 @@ func main() {
 	}
 }
 
-func readRepositoryConfig(dir string) (string, string) {
-	owner := strings.TrimSpace(defaultOwner)
-	repo := strings.TrimSpace(defaultRepo)
-	path := filepath.Join(dir, "installer-config.json")
-	if raw, err := os.ReadFile(path); err == nil {
-		var cfg installerConfig
-		if json.Unmarshal(raw, &cfg) == nil {
-			if strings.TrimSpace(cfg.GitHubOwner) != "" {
-				owner = strings.TrimSpace(cfg.GitHubOwner)
-			}
-			if strings.TrimSpace(cfg.GitHubRepository) != "" {
-				repo = strings.TrimSpace(cfg.GitHubRepository)
-			}
-		}
+func writeUTF8BOM(path string, content []byte, mode os.FileMode) error {
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	if len(content) >= 3 && content[0] == bom[0] && content[1] == bom[1] && content[2] == bom[2] {
+		return os.WriteFile(path, content, mode)
 	}
-	return owner, repo
+	withBOM := make([]byte, 0, len(content)+3)
+	withBOM = append(withBOM, bom...)
+	withBOM = append(withBOM, content...)
+	return os.WriteFile(path, withBOM, mode)
 }
 
 func isAdmin() bool {

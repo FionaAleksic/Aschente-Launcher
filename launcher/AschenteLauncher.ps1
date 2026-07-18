@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [switch]$ResetConfiguration
 )
@@ -37,9 +37,10 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 $script:AppName = 'Aschente Launcher'
-$script:AppVersion = if ([string]::IsNullOrWhiteSpace($env:ASCHENTE_VERSION)) { '0.2.0' } else { $env:ASCHENTE_VERSION.TrimStart('v') }
+$script:AppVersion = if ([string]::IsNullOrWhiteSpace($env:ASCHENTE_VERSION)) { '0.3.0' } else { $env:ASCHENTE_VERSION.TrimStart('v') }
 $script:InstallDirectory = if ([string]::IsNullOrWhiteSpace($env:ASCHENTE_INSTALL_DIR)) { Split-Path -Parent $PSCommandPath } else { $env:ASCHENTE_INSTALL_DIR }
 $script:DataDirectory = if ([string]::IsNullOrWhiteSpace($env:ASCHENTE_DATA_DIR)) { Join-Path $script:InstallDirectory 'Data' } else { $env:ASCHENTE_DATA_DIR }
+$script:BrandImagePath = $env:ASCHENTE_BRAND_IMAGE
 $script:ConfigPath = Join-Path $script:DataDirectory 'config.json'
 $script:LibraryPath = Join-Path $script:DataDirectory 'library.json'
 $script:LogPath = Join-Path $script:DataDirectory 'app.log'
@@ -103,6 +104,36 @@ function Show-Error {
 function Show-Info {
     param([string]$Message, [string]$Title = $script:AppName)
     [System.Windows.MessageBox]::Show($Message, $Title, 'OK', 'Information') | Out-Null
+}
+
+function Get-BrandImageSource {
+    if ([string]::IsNullOrWhiteSpace($script:BrandImagePath) -or -not (Test-Path -LiteralPath $script:BrandImagePath)) {
+        return $null
+    }
+
+    try {
+        $bitmap = New-Object System.Windows.Media.Imaging.BitmapImage
+        $bitmap.BeginInit()
+        $bitmap.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+        $bitmap.UriSource = New-Object System.Uri([IO.Path]::GetFullPath($script:BrandImagePath), [UriKind]::Absolute)
+        $bitmap.EndInit()
+        $bitmap.Freeze()
+        return $bitmap
+    }
+    catch { return $null }
+}
+
+function Set-WindowBranding {
+    param([Parameter(Mandatory)]$Window)
+    $source = Get-BrandImageSource
+    if (-not $source) { return }
+
+    try { $Window.Icon = $source } catch { }
+    try {
+        $image = $Window.FindName('BrandImage')
+        if ($image) { $image.Source = $source }
+    }
+    catch { }
 }
 
 function Ensure-DataDirectory {
@@ -897,6 +928,7 @@ function Show-GameEditor {
 
     $reader = New-Object System.Xml.XmlNodeReader $xaml
     $window = [Windows.Markup.XamlReader]::Load($reader)
+    Set-WindowBranding -Window $window
     $window.Owner = $script:MainWindow
 
     $nameBox = $window.FindName('NameBox')
@@ -1013,6 +1045,7 @@ function Show-SettingsWindow {
 
     $reader = New-Object System.Xml.XmlNodeReader $xaml
     $window = [Windows.Markup.XamlReader]::Load($reader)
+    Set-WindowBranding -Window $window
     $window.Owner = $script:MainWindow
 
     $libraryList = $window.FindName('LibraryList')
@@ -1135,8 +1168,9 @@ function Show-SetupWizard {
         <Grid.ColumnDefinitions><ColumnDefinition Width="215"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
         <Border Background="#171A24" Padding="24">
             <StackPanel>
-                <TextBlock Text="LOCAL" FontSize="13" Foreground="#9EA6B5"/>
-                <TextBlock Text="GAME LIBRARY" FontSize="26" FontWeight="Bold" Margin="0,0,0,30"/>
+                <Image x:Name="BrandImage" Width="142" Height="142" Stretch="Uniform" HorizontalAlignment="Left" Margin="0,0,0,18"/>
+                <TextBlock Text="ASCHENTE" FontSize="25" FontWeight="Bold"/>
+                <TextBlock Text="GAME LIBRARY" FontSize="13" Foreground="#9EA6B5" Margin="0,2,0,24"/>
                 <TextBlock x:Name="StepIndicator" Text="Schritt 1 von 4" Foreground="#AFA7FF" FontWeight="SemiBold"/>
                 <TextBlock Text="Alles bleibt auf diesem PC." TextWrapping="Wrap" Margin="0,22,0,0" Foreground="#BBC1CC"/>
             </StackPanel>
@@ -1207,6 +1241,7 @@ function Show-SetupWizard {
 
     $reader = New-Object System.Xml.XmlNodeReader $xaml
     $window = [Windows.Markup.XamlReader]::Load($reader)
+    Set-WindowBranding -Window $window
 
     $pages = @(
         $window.FindName('Page1'),
@@ -1370,13 +1405,17 @@ function Show-MainWindow {
         <Border DockPanel.Dock="Top" Background="#161923" Padding="18,14">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="250"/><ColumnDefinition Width="*"/><ColumnDefinition Width="190"/>
+                    <ColumnDefinition Width="300"/><ColumnDefinition Width="*"/><ColumnDefinition Width="190"/>
                     <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <StackPanel>
-                    <TextBlock Text="LOCAL GAME LIBRARY" FontSize="18" FontWeight="Bold"/>
-                    <TextBlock Text="Offline-Bibliothek" Foreground="#8F97A8" FontSize="12"/>
-                </StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="58"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Image x:Name="BrandImage" Width="50" Height="50" Stretch="Uniform" VerticalAlignment="Center"/>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="10,0,0,0">
+                        <TextBlock Text="ASCHENTE LAUNCHER" FontSize="18" FontWeight="Bold"/>
+                        <TextBlock Text="Lokale Offline-Bibliothek" Foreground="#8F97A8" FontSize="12"/>
+                    </StackPanel>
+                </Grid>
                 <TextBox x:Name="SearchBox" Grid.Column="1" Margin="14,0" VerticalContentAlignment="Center" ToolTip="Spiele durchsuchen"/>
                 <ComboBox x:Name="SourceFilter" Grid.Column="2" Margin="4,0" VerticalContentAlignment="Center"/>
                 <CheckBox x:Name="FavoritesOnly" Grid.Column="3" Content="Nur Favoriten" Margin="12,0"/>
@@ -1440,6 +1479,7 @@ function Show-MainWindow {
 
     $reader = New-Object System.Xml.XmlNodeReader $xaml
     $window = [Windows.Markup.XamlReader]::Load($reader)
+    Set-WindowBranding -Window $window
     $script:MainWindow = $window
     $script:GameGrid = $window.FindName('GameGrid')
     $script:SearchBox = $window.FindName('SearchBox')

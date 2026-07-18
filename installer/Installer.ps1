@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [switch]$Uninstall
 )
@@ -17,11 +17,34 @@ $script:DefaultInstallPath = Join-Path $env:ProgramFiles 'Aschente'
 $script:StartMenuRoot = [Environment]::GetFolderPath('CommonPrograms')
 $script:StartMenuDirectory = Join-Path $script:StartMenuRoot 'Aschente'
 $script:UninstallRegistryPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\AschenteLauncher'
-$script:Owner = $env:ASCHENTE_GITHUB_OWNER
-$script:Repository = $env:ASCHENTE_GITHUB_REPO
+$script:Owner = if ([string]::IsNullOrWhiteSpace($env:ASCHENTE_GITHUB_OWNER)) { 'FionaAleksic' } else { $env:ASCHENTE_GITHUB_OWNER }
+$script:Repository = if ([string]::IsNullOrWhiteSpace($env:ASCHENTE_GITHUB_REPO)) { 'Aschente-Launcher' } else { $env:ASCHENTE_GITHUB_REPO }
+$script:BrandImagePath = $env:ASCHENTE_BRAND_IMAGE
 $script:InstallerExecutable = $env:ASCHENTE_INSTALLER_EXE
 $script:LatestRelease = $null
 $script:InstalledVersion = $null
+
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+}
+catch { }
+
+function Get-BrandImageSource {
+    if ([string]::IsNullOrWhiteSpace($script:BrandImagePath) -or -not (Test-Path -LiteralPath $script:BrandImagePath)) {
+        return $null
+    }
+
+    try {
+        $bitmap = New-Object System.Windows.Media.Imaging.BitmapImage
+        $bitmap.BeginInit()
+        $bitmap.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+        $bitmap.UriSource = New-Object System.Uri([IO.Path]::GetFullPath($script:BrandImagePath), [UriKind]::Absolute)
+        $bitmap.EndInit()
+        $bitmap.Freeze()
+        return $bitmap
+    }
+    catch { return $null }
+}
 
 function Show-Error {
     param([string]$Message)
@@ -66,7 +89,7 @@ function Invoke-UiPump {
 
 function Get-LatestRelease {
     if (-not (Test-RepositoryConfiguration)) {
-        throw 'Die GitHub-Quelle ist noch nicht konfiguriert. Trage in installer-config.json den GitHub-Benutzernamen und den Repository-Namen ein oder baue den Installer über GitHub Actions.'
+        throw 'Die fest eingebaute GitHub-Quelle FionaAleksic/Aschente-Launcher ist ungültig.'
     }
 
     $uri = "https://api.github.com/repos/$($script:Owner)/$($script:Repository)/releases/latest"
@@ -109,7 +132,8 @@ function New-Shortcut {
     param(
         [Parameter(Mandatory)][string]$ShortcutPath,
         [Parameter(Mandatory)][string]$TargetPath,
-        [Parameter(Mandatory)][string]$WorkingDirectory
+        [Parameter(Mandatory)][string]$WorkingDirectory,
+        [string]$Arguments = ''
     )
 
     $shell = New-Object -ComObject WScript.Shell
@@ -117,6 +141,7 @@ function New-Shortcut {
     $shortcut.TargetPath = $TargetPath
     $shortcut.WorkingDirectory = $WorkingDirectory
     $shortcut.Description = 'Lokale Spielebibliothek'
+    $shortcut.Arguments = $Arguments
     $shortcut.IconLocation = "$TargetPath,0"
     $shortcut.Save()
 }
@@ -170,13 +195,30 @@ function Install-LatestRelease {
         & $ProgressCallback 20
         Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archivePath -UseBasicParsing
 
+        & $StatusCallback 'Download wird per SHA-256 geprüft …'
+        & $ProgressCallback 38
+        $expectedHash = $null
         if ($asset.digest -and $asset.digest -match '^sha256:(?<Hash>[0-9a-fA-F]{64})$') {
-            & $StatusCallback 'Download wird per SHA-256 geprüft …'
-            & $ProgressCallback 38
-            $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
-            if ($actualHash -ine $Matches.Hash) {
-                throw 'Die SHA-256-Prüfung des Downloads ist fehlgeschlagen. Die Installation wurde abgebrochen.'
+            $expectedHash = $Matches.Hash
+        }
+        else {
+            $checksumAsset = @($release.assets | Where-Object { $_.name -eq 'SHA256SUMS.txt' }) | Select-Object -First 1
+            if ($checksumAsset) {
+                $checksumPath = Join-Path $tempRoot 'SHA256SUMS.txt'
+                Invoke-WebRequest -Uri $checksumAsset.browser_download_url -OutFile $checksumPath -UseBasicParsing
+                $escapedAssetName = [Regex]::Escape($script:AssetName)
+                $checksumLine = Get-Content -LiteralPath $checksumPath | Where-Object { $_ -match "^(?<Hash>[0-9a-fA-F]{64})\s+\*?${escapedAssetName}$" } | Select-Object -First 1
+                if ($checksumLine -and $checksumLine -match '^(?<Hash>[0-9a-fA-F]{64})') {
+                    $expectedHash = $Matches.Hash
+                }
             }
+        }
+        if ([string]::IsNullOrWhiteSpace($expectedHash)) {
+            throw 'Für das Release wurde keine SHA-256-Prüfsumme gefunden. Die Installation wurde aus Sicherheitsgründen abgebrochen.'
+        }
+        $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
+        if ($actualHash -ine $expectedHash) {
+            throw 'Die SHA-256-Prüfung des Downloads ist fehlgeschlagen. Die Installation wurde abgebrochen.'
         }
 
         & $StatusCallback 'Paket wird entpackt …'
@@ -221,7 +263,7 @@ function Install-LatestRelease {
         if ($CreateStartMenu) {
             New-Item -ItemType Directory -Path $script:StartMenuDirectory -Force | Out-Null
             New-Shortcut -ShortcutPath (Join-Path $script:StartMenuDirectory 'Aschente Launcher.lnk') -TargetPath $launcherTarget -WorkingDirectory $InstallPath
-            New-Shortcut -ShortcutPath (Join-Path $script:StartMenuDirectory 'Aschente Launcher deinstallieren.lnk') -TargetPath $uninstallerPath -WorkingDirectory $InstallPath
+            New-Shortcut -ShortcutPath (Join-Path $script:StartMenuDirectory 'Aschente Launcher deinstallieren.lnk') -TargetPath $uninstallerPath -WorkingDirectory $InstallPath -Arguments '-Uninstall'
         }
         else {
             Remove-Item -LiteralPath $script:StartMenuDirectory -Recurse -Force -ErrorAction SilentlyContinue
@@ -317,95 +359,175 @@ if ($installedInfo -and -not [string]::IsNullOrWhiteSpace($installedInfo.Install
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Aschente Launcher – Installation"
-        Width="720" Height="520" MinWidth="680" MinHeight="500"
+        Width="760" Height="640" MinWidth="720" MinHeight="600"
         WindowStartupLocation="CenterScreen" ResizeMode="CanMinimize"
-        Background="#15171C">
-    <Grid Margin="30">
+        Background="#11141B" Foreground="#F5F7FA">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#303746"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="17,9"/>
+            <Setter Property="MinHeight" Value="38"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="#EDF0F5"/>
+            <Setter Property="Margin" Value="0,7"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="28">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="18"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="14"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="18"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="18"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0">
-            <TextBlock Text="Aschente Launcher" FontSize="30" FontWeight="SemiBold" Foreground="#F5F7FA"/>
-            <TextBlock Text="Lokale Spielebibliothek installieren oder aktualisieren" Margin="0,6,0,0" FontSize="15" Foreground="#AEB6C5"/>
-        </StackPanel>
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="92"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Width="76" Height="76" CornerRadius="15" Background="#1D2230" VerticalAlignment="Center">
+                <Image x:Name="BrandImage" Stretch="Uniform" Margin="5"/>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="16,0,0,0">
+                <TextBlock Text="Aschente Launcher" FontSize="30" FontWeight="SemiBold"/>
+                <TextBlock Text="Lokale Spielebibliothek installieren oder aktualisieren"
+                           Margin="0,5,0,0" FontSize="15" Foreground="#AEB6C5"/>
+            </StackPanel>
+        </Grid>
 
-        <Border Grid.Row="2" Background="#20242C" CornerRadius="10" Padding="18">
-            <StackPanel>
-                <TextBlock Text="Installationsordner" FontWeight="SemiBold" Foreground="#F5F7FA"/>
-                <Grid Margin="0,10,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBox x:Name="InstallPathBox" Height="34" Padding="9,6" VerticalContentAlignment="Center"/>
-                    <Button x:Name="BrowseButton" Grid.Column="1" Content="Durchsuchen …" Margin="10,0,0,0" Padding="14,5"/>
+        <Border Grid.Row="2" Background="#1C212B" CornerRadius="12" Padding="22">
+            <Grid>
+                <Grid x:Name="OptionsPage">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="18"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="18"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Text="Installationsoptionen" FontSize="22" FontWeight="SemiBold"/>
+                    <TextBlock Grid.Row="1" Margin="0,7,0,0" Foreground="#AEB6C5" TextWrapping="Wrap"
+                               Text="Der Installer lädt automatisch das neueste Release von FionaAleksic/Aschente-Launcher. Eine GitHub-Eingabe ist nicht erforderlich."/>
+
+                    <StackPanel Grid.Row="3">
+                        <TextBlock Text="Installationsordner" FontWeight="SemiBold"/>
+                        <Grid Margin="0,9,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="InstallPathBox"/>
+                            <Button x:Name="BrowseButton" Grid.Column="1" Content="Durchsuchen…" Margin="10,0,0,0"/>
+                        </Grid>
+                        <TextBlock Text="Standard: C:\Program Files\Aschente" Margin="0,7,0,0" Foreground="#8F98A8" FontSize="12"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="5">
+                        <CheckBox x:Name="StartMenuCheck" Content="Startmenü-Verknüpfung für alle Benutzer erstellen" IsChecked="True"/>
+                        <CheckBox x:Name="DesktopCheck" Content="Desktop-Verknüpfung für alle Benutzer erstellen"/>
+                        <Border Margin="0,18,0,0" Background="#151922" CornerRadius="8" Padding="14">
+                            <TextBlock Foreground="#B9C0CC" TextWrapping="Wrap"
+                                       Text="Bei einem Update bleiben Konfiguration, Bibliothekseinträge und Protokolle im Data-Ordner erhalten."/>
+                        </Border>
+                    </StackPanel>
                 </Grid>
-                <TextBlock Text="Standard: C:\Program Files\Aschente" Margin="0,8,0,0" Foreground="#929BAB" FontSize="12"/>
-            </StackPanel>
+
+                <Grid x:Name="SummaryPage" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="18"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="18"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="Installation bestätigen" FontSize="22" FontWeight="SemiBold"/>
+                    <TextBlock Grid.Row="1" Margin="0,7,0,0" Foreground="#AEB6C5" TextWrapping="Wrap"
+                               Text="Prüfe die Einstellungen. Mit „Installieren“ wird das neueste GitHub-Release heruntergeladen und eingerichtet."/>
+                    <Border Grid.Row="3" Background="#151922" CornerRadius="8" Padding="16">
+                        <TextBlock x:Name="SummaryText" TextWrapping="Wrap" FontSize="14" LineHeight="24"/>
+                    </Border>
+                    <StackPanel Grid.Row="5">
+                        <ProgressBar x:Name="ProgressBar" Height="10" Minimum="0" Maximum="100" Value="0"/>
+                        <TextBlock x:Name="StatusText" Margin="0,11,0,0" Foreground="#C8CFDA" Text="Bereit zur Installation." TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Grid>
+            </Grid>
         </Border>
 
-        <Border Grid.Row="4" Background="#20242C" CornerRadius="10" Padding="18">
-            <StackPanel>
-                <CheckBox x:Name="StartMenuCheck" Content="Startmenü-Verknüpfung für alle Benutzer erstellen" IsChecked="True" Foreground="#F5F7FA"/>
-                <CheckBox x:Name="DesktopCheck" Content="Desktop-Verknüpfung für alle Benutzer erstellen" Margin="0,10,0,0" Foreground="#F5F7FA"/>
-                <TextBlock Text="GitHub-Quelle (Besitzer/Repository)" Margin="0,14,0,0" FontWeight="SemiBold" Foreground="#F5F7FA"/>
-                <TextBox x:Name="RepositoryBox" Margin="0,8,0,0" Height="32" Padding="9,5" VerticalContentAlignment="Center"/>
-                <TextBlock x:Name="RepositoryHint" Margin="0,7,0,0" Foreground="#929BAB" FontSize="12" TextWrapping="Wrap"/>
+        <Grid Grid.Row="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Button x:Name="BackButton" Content="Zurück" MinWidth="110" Visibility="Hidden" HorizontalAlignment="Left"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button x:Name="CancelButton" Content="Abbrechen" MinWidth="110"/>
+                <Button x:Name="NextButton" Content="Weiter" MinWidth="150" Margin="12,0,0,0" Background="#6557E8" FontWeight="SemiBold"/>
             </StackPanel>
-        </Border>
-
-        <StackPanel Grid.Row="6">
-            <ProgressBar x:Name="ProgressBar" Height="9" Minimum="0" Maximum="100" Value="0"/>
-            <TextBlock x:Name="StatusText" Margin="0,10,0,0" Foreground="#C8CFDA" Text="Bereit zur Installation." TextWrapping="Wrap"/>
-        </StackPanel>
-
-        <TextBlock Grid.Row="7" Margin="0,18,0,0" Foreground="#818A99" TextWrapping="Wrap"
-                   Text="Der Installer lädt das neueste veröffentlichte GitHub-Release. Bestehende Einstellungen und Bibliothekseinträge im Data-Ordner bleiben bei Updates erhalten."/>
-
-        <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,24,0,0">
-            <Button x:Name="CancelButton" Content="Abbrechen" MinWidth="110" Padding="14,7"/>
-            <Button x:Name="InstallButton" Content="Installieren" MinWidth="150" Margin="12,0,0,0" Padding="14,7" FontWeight="SemiBold"/>
-        </StackPanel>
+        </Grid>
     </Grid>
 </Window>
 '@
 
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
+$brandImage = $window.FindName('BrandImage')
+$optionsPage = $window.FindName('OptionsPage')
+$summaryPage = $window.FindName('SummaryPage')
 $installPathBox = $window.FindName('InstallPathBox')
 $browseButton = $window.FindName('BrowseButton')
 $startMenuCheck = $window.FindName('StartMenuCheck')
 $desktopCheck = $window.FindName('DesktopCheck')
-$repositoryBox = $window.FindName('RepositoryBox')
-$repositoryHint = $window.FindName('RepositoryHint')
+$summaryText = $window.FindName('SummaryText')
 $progressBar = $window.FindName('ProgressBar')
 $statusText = $window.FindName('StatusText')
+$backButton = $window.FindName('BackButton')
 $cancelButton = $window.FindName('CancelButton')
-$installButton = $window.FindName('InstallButton')
+$nextButton = $window.FindName('NextButton')
+
+$imageSource = Get-BrandImageSource
+if ($imageSource) {
+    $brandImage.Source = $imageSource
+    $window.Icon = $imageSource
+}
 
 $installPathBox.Text = $script:DefaultInstallPath
-if (Test-RepositoryConfiguration) {
-    $repositoryBox.Text = "$($script:Owner)/$($script:Repository)"
-    $repositoryBox.IsReadOnly = $true
-    $repositoryHint.Text = 'Diese Quelle wurde beim Build des Installers eingebettet.'
-}
-else {
-    $repositoryBox.Text = ''
-    $repositoryHint.Text = 'Beim lokalen Vorschau-Installer einmalig eintragen. Der GitHub-Actions-Release-Build füllt dieses Feld automatisch.'
-    $repositoryHint.Foreground = '#FFD27D'
-}
 if ($script:InstalledVersion) {
-    $statusText.Text = "Installierte Version: $($script:InstalledVersion). Die neueste Version wird beim Start der Installation geladen."
-    $installButton.Content = 'Aktualisieren'
+    $statusText.Text = "Installierte Version: $($script:InstalledVersion). Die neueste Version wird bei der Installation ermittelt."
+}
+
+function Get-ValidatedInstallPath {
+    $installPath = [Environment]::ExpandEnvironmentVariables($installPathBox.Text.Trim())
+    if ([string]::IsNullOrWhiteSpace($installPath)) {
+        throw 'Bitte wähle einen Installationsordner aus.'
+    }
+    if (-not [IO.Path]::IsPathRooted($installPath)) {
+        throw 'Der Installationsordner muss ein vollständiger Windows-Pfad sein.'
+    }
+    return [IO.Path]::GetFullPath($installPath)
+}
+
+function Update-InstallSummary {
+    $path = Get-ValidatedInstallPath
+    $startMenuText = if ([bool]$startMenuCheck.IsChecked) { 'Ja' } else { 'Nein' }
+    $desktopText = if ([bool]$desktopCheck.IsChecked) { 'Ja' } else { 'Nein' }
+    $mode = if ($script:InstalledVersion) { "Update von Version $($script:InstalledVersion)" } else { 'Neuinstallation' }
+    $summaryText.Text = "Vorgang: $mode`nInstallationsordner: $path`nStartmenü-Verknüpfung: $startMenuText`nDesktop-Verknüpfung: $desktopText`nQuelle: github.com/FionaAleksic/Aschente-Launcher (neuestes Release)"
 }
 
 $browseButton.Add_Click({
@@ -418,12 +540,22 @@ $browseButton.Add_Click({
     }
 })
 
-$cancelButton.Add_Click({ $window.Close() })
-
+$script:CurrentPage = 1
 $script:InstallationComplete = $false
 $script:InstalledLauncherPath = $null
 
-$installButton.Add_Click({
+$backButton.Add_Click({
+    if ($script:CurrentPage -ne 2 -or $script:InstallationComplete) { return }
+    $summaryPage.Visibility = 'Collapsed'
+    $optionsPage.Visibility = 'Visible'
+    $backButton.Visibility = 'Hidden'
+    $nextButton.Content = 'Weiter'
+    $script:CurrentPage = 1
+})
+
+$cancelButton.Add_Click({ $window.Close() })
+
+$nextButton.Add_Click({
     if ($script:InstallationComplete) {
         try { Start-Process -FilePath $script:InstalledLauncherPath }
         catch { Show-Error $_.Exception.Message }
@@ -431,24 +563,23 @@ $installButton.Add_Click({
         return
     }
 
+    if ($script:CurrentPage -eq 1) {
+        try {
+            Update-InstallSummary
+            $optionsPage.Visibility = 'Collapsed'
+            $summaryPage.Visibility = 'Visible'
+            $backButton.Visibility = 'Visible'
+            $nextButton.Content = if ($script:InstalledVersion) { 'Aktualisieren' } else { 'Installieren' }
+            $script:CurrentPage = 2
+        }
+        catch { Show-Error $_.Exception.Message }
+        return
+    }
+
     try {
-        $repositoryValue = $repositoryBox.Text.Trim()
-        if ($repositoryValue -notmatch '^(?<Owner>[^\s/\\]+)/(?<Repository>[^\s/\\]+)$') {
-            throw 'Bitte gib die GitHub-Quelle im Format Besitzer/Repository an.'
-        }
-        $script:Owner = $Matches.Owner
-        $script:Repository = $Matches.Repository
-
-        $installPath = [Environment]::ExpandEnvironmentVariables($installPathBox.Text.Trim())
-        if ([string]::IsNullOrWhiteSpace($installPath)) {
-            throw 'Bitte wähle einen Installationsordner aus.'
-        }
-        if (-not [IO.Path]::IsPathRooted($installPath)) {
-            throw 'Der Installationsordner muss ein vollständiger Windows-Pfad sein.'
-        }
-
-        $installButton.IsEnabled = $false
-        $browseButton.IsEnabled = $false
+        $installPath = Get-ValidatedInstallPath
+        $nextButton.IsEnabled = $false
+        $backButton.IsEnabled = $false
         $cancelButton.IsEnabled = $false
         $window.Cursor = 'Wait'
 
@@ -470,21 +601,16 @@ $installButton.Add_Click({
         $window.Cursor = 'Arrow'
         $cancelButton.Content = 'Schließen'
         $cancelButton.IsEnabled = $true
-        $installButton.Content = 'Launcher starten'
-        $installButton.IsEnabled = $true
-        $browseButton.IsEnabled = $false
-        $installPathBox.IsEnabled = $false
-        $startMenuCheck.IsEnabled = $false
-        $desktopCheck.IsEnabled = $false
-        $repositoryBox.IsEnabled = $false
-
+        $nextButton.Content = 'Launcher starten'
+        $nextButton.IsEnabled = $true
+        $backButton.Visibility = 'Hidden'
         $script:InstalledLauncherPath = [string]$result.LauncherPath
         $script:InstallationComplete = $true
     }
     catch {
         $window.Cursor = 'Arrow'
-        $installButton.IsEnabled = $true
-        $browseButton.IsEnabled = $true
+        $nextButton.IsEnabled = $true
+        $backButton.IsEnabled = $true
         $cancelButton.IsEnabled = $true
         $progressBar.Value = 0
         $statusText.Text = 'Installation fehlgeschlagen.'

@@ -5,3 +5,4 @@
 Data/
 .vscode/
 .idea/
+**/rsrc_windows_*.syso

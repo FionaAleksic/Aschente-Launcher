@@ -1,18 +1,37 @@
-# Release erstellen
+# Neue Version veröffentlichen
 
-## Automatisch
+## Empfohlener Weg
+
+Im Repository-Ordner:
 
 ```powershell
-git tag v0.2.0
-git push origin v0.2.0
+.\scripts\Publish-NewVersion.ps1 -Version 0.3.0
 ```
 
-Der Tag startet `.github/workflows/release.yml`. Der Workflow benötigt `contents: write`, um das Release anzulegen und Assets hochzuladen.
+Das Skript führt im Wesentlichen diese Befehle aus:
 
-## Erzeugte Assets
+```powershell
+git add -A
+git commit -m "Release v0.3.0"
+git push origin main
+git tag -a v0.3.0 -m "Aschente Launcher 0.3.0"
+git push origin v0.3.0
+```
 
-- `Installer.exe`
-- `Aschente-Launcher-win-x64.zip`
-- `SHA256SUMS.txt`
+Der Tag startet den Release-Workflow. GitHub Actions baut die EXE-Dateien, erstellt das Release-Paket und veröffentlicht alle drei Assets.
 
-Der Dateiname des Launcher-Pakets darf nicht geändert werden, ohne gleichzeitig `$script:AssetName` in `installer/Installer.ps1` anzupassen.
+## Versionsregel
+
+Verwende immer eine neue Version im Format:
+
+```text
+vHAUPTVERSION.NEBENVERSION.PATCH
+```
+
+Beispiel:
+
+```text
+v0.3.1
+```
+
+Ein vorhandener Release-Tag darf nicht erneut verwendet werden.

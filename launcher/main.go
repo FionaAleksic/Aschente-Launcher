@@ -18,7 +18,10 @@ import (
 //go:embed AschenteLauncher.ps1
 var launcherScript []byte
 
-var version = "0.2.0-dev"
+//go:embed Aschente_Icon.png
+var brandImage []byte
+
+var version = "0.3.0-dev"
 
 func main() {
 	exePath, err := os.Executable()
@@ -31,14 +34,19 @@ func main() {
 	dataDir := filepath.Join(installDir, "Data")
 	runtimeDir := filepath.Join(dataDir, "Runtime")
 	scriptPath := filepath.Join(runtimeDir, "AschenteLauncher.ps1")
+	brandPath := filepath.Join(runtimeDir, "Aschente_Icon.png")
 
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		messageBox("Aschente Launcher", "Der Datenordner konnte nicht erstellt werden.\n\n"+err.Error(), 0x10)
 		return
 	}
 
-	if err := writeWhenChanged(scriptPath, launcherScript); err != nil {
+	if err := writeWhenChangedWithBOM(scriptPath, launcherScript); err != nil {
 		messageBox("Aschente Launcher", "Die eingebettete Programmoberfläche konnte nicht vorbereitet werden.\n\n"+err.Error(), 0x10)
+		return
+	}
+	if err := writeWhenChanged(brandPath, brandImage); err != nil {
+		messageBox("Aschente Launcher", "Das Programmlogo konnte nicht vorbereitet werden.\n\n"+err.Error(), 0x10)
 		return
 	}
 
@@ -56,12 +64,24 @@ func main() {
 		"ASCHENTE_INSTALL_DIR="+installDir,
 		"ASCHENTE_DATA_DIR="+dataDir,
 		"ASCHENTE_VERSION="+strings.TrimPrefix(version, "v"),
+		"ASCHENTE_BRAND_IMAGE="+brandPath,
 	)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 
 	if err := cmd.Run(); err != nil {
 		messageBox("Aschente Launcher", fmt.Sprintf("Der Launcher konnte nicht gestartet werden.\n\nPowerShell: %s\nFehler: %v", host, err), 0x10)
 	}
+}
+
+func writeWhenChangedWithBOM(path string, content []byte) error {
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	if len(content) < 3 || content[0] != bom[0] || content[1] != bom[1] || content[2] != bom[2] {
+		prefixed := make([]byte, 0, len(content)+3)
+		prefixed = append(prefixed, bom...)
+		prefixed = append(prefixed, content...)
+		content = prefixed
+	}
+	return writeWhenChanged(path, content)
 }
 
 func writeWhenChanged(path string, content []byte) error {
